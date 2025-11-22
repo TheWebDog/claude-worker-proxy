@@ -57,6 +57,7 @@ curl -X POST https://claude-worker-proxy.xxxx.workers.dev/gemini/https://generat
 claude
 ```
 
+
 ---
 
 <table>
@@ -67,9 +68,16 @@ claude
       <strong>AI 学习交流社群</strong>
     </td>
     <td align="center">
-      <img src="https://github.com/glidea/zenfeed/blob/main/docs/images/sponsor.png?raw=true" width="500">
+      <img src="https://github.com/glidea/banana-prompt-quicker/blob/main/images/glidea.png?raw=true" width="250">
       <br>
-      <strong><a href="https://afdian.com/a/glidea">请杯奶茶 🧋</a></strong>
+      <strong><a href="https://glidea.zenfeed.xyz/">我的其它项目</a></strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="https://github.com/glidea/banana-prompt-quicker/blob/main/images/readnote.png?raw=true" width="400">
+      <br>
+      <strong><a href="https://www.xiaohongshu.com/user/profile/5f7dc54d0000000001004afb">📕 小红书账号 - 持续分享 AI 原创</a></strong>
     </td>
   </tr>
 </table>
