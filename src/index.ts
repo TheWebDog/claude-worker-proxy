@@ -118,19 +118,53 @@ async function handle(request: Request): Promise<Response> {
 
             try {
               const json = JSON.parse(data);
-              if (json.usage) {
-                // 这是 usage chunk！改成 Claude 风格
-                const newUsage = {
-                  input_tokens: json.usage.prompt_tokens ?? json.usage.input_tokens ?? 0,
-                  output_tokens: json.usage.completion_tokens ?? json.usage.output_tokens ?? 0,
-                  cache_creation_input_tokens: 0,
-                  cache_read_input_tokens: 0
-                };
-                const newJson = { ...json, usage: newUsage };
-                const newData = 'data: ' + JSON.stringify(newJson);
-                controller.enqueue(new TextEncoder().encode(newData + '\n\n'));
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+
+              if (data === '[DONE]') {
+                console.log('Reached [DONE]');
+                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
                 continue;
               }
+
+              try {
+                const json = JSON.parse(data);
+
+                // 关键：如果这个 chunk 是 usage chunk（choices 为空数组 + 有 usage）
+                if (json.choices && json.choices.length === 0 && json.usage) {
+                  console.log('Found NVIDIA usage chunk! Original:', json.usage);
+
+                  // 改成 Claude 风格
+                  const claudeUsage = {
+                    input_tokens: json.usage.prompt_tokens ?? 0,
+                    output_tokens: json.usage.completion_tokens ?? 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0
+                  };
+
+                  // 保留原结构，只换 usage
+                  const newJson = {
+                    ...json,
+                    usage: claudeUsage
+                  };
+
+                  const newData = 'data: ' + JSON.stringify(newJson);
+                  console.log('Sending modified usage chunk:', claudeUsage);
+                  controller.enqueue(new TextEncoder().encode(newData + '\n\n'));
+                  continue;
+                }
+
+                // 其他 chunk 原样输出
+                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+
+              } catch (e) {
+                console.log('JSON parse failed for line:', line, 'error:', e);
+                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+              }
+            } else {
+              // 非 data: 行，原样
+              controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+            }
             } catch (e) {
               // 解析失败，原样输出
             }
