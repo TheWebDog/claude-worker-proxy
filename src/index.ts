@@ -50,7 +50,44 @@ async function handle(request: Request): Promise<Response> {
         apiKey
     )
     const providerResponse = await fetch(providerRequest)
-    return await provider.convertToClaudeResponse(providerResponse)
+// ------------------ 修复 Claude Code usage 解析崩溃 ------------------
+    let claudeBody: any;
+    try {
+      claudeBody = await providerResponse.clone().json();  // clone 避免 body 被消费
+    } catch (e) {
+      // 如果不是 JSON，直接原样返回
+      return providerResponse;
+    }
+
+    // 强制把 usage 改成 Claude 风格（关键！）
+    if (claudeBody && claudeBody.usage) {
+      claudeBody.usage = {
+        input_tokens: claudeBody.usage.prompt_tokens ?? claudeBody.usage.input_tokens ?? 0,
+        output_tokens: claudeBody.usage.completion_tokens ?? claudeBody.usage.output_tokens ?? 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0
+      };
+    } else if (claudeBody) {
+      // 如果 usage 完全缺失，补一个默认值（防止 undefined 崩溃）
+      claudeBody.usage = {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0
+      };
+    }
+
+    // 用修改后的 body 创建新 Response（保留原 status 和 headers）
+    const modifiedResponse = new Response(JSON.stringify(claudeBody), {
+      status: providerResponse.status,
+      statusText: providerResponse.statusText,
+      headers: providerResponse.headers
+    });
+
+    // ------------------ 修复结束 ------------------
+
+    // 原来的返回改成返回 modifiedResponse
+    return modifiedResponse;
 }
 
 function parsePath(url: URL): { typeParam?: string; baseUrl?: string; err?: Response } {
