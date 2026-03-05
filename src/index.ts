@@ -50,44 +50,99 @@ async function handle(request: Request): Promise<Response> {
         apiKey
     )
     const providerResponse = await fetch(providerRequest)
-// ------------------ 修复 Claude Code usage 解析崩溃 ------------------
-    let claudeBody: any;
-    try {
-      claudeBody = await providerResponse.clone().json();  // clone 避免 body 被消费
-    } catch (e) {
-      // 如果不是 JSON，直接原样返回
-      return providerResponse;
+    
+    // 先让原有转换函数处理（支持流式转换 OpenAI → Claude 格式）
+    let claudeResponse = await provider.convertToClaudeResponse(providerResponse);
+
+    // 判断是否流式（text/event-stream 是 OpenAI/Claude 流式标准）
+    const contentType = claudeResponse.headers.get('content-type') || '';
+    const isStream = contentType.includes('text/event-stream');
+
+    if (!isStream) {
+      // 非流式：直接读 body 修改 usage（简单）
+      let body: any;
+      try {
+        body = await claudeResponse.clone().json();
+      } catch (e) {
+        return claudeResponse;
+      }
+
+      if (body?.usage) {
+        body.usage = {
+          input_tokens: body.usage.prompt_tokens ?? body.usage.input_tokens ?? 0,
+          output_tokens: body.usage.completion_tokens ?? body.usage.output_tokens ?? 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        };
+      } else if (body) {
+        body.usage = {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        };
+      }
+
+      return new Response(JSON.stringify(body), {
+        status: claudeResponse.status,
+        statusText: claudeResponse.statusText,
+        headers: claudeResponse.headers
+      });
     }
 
-    // 强制把 usage 改成 Claude 风格（关键！）
-    if (claudeBody && claudeBody.usage) {
-      claudeBody.usage = {
-        input_tokens: claudeBody.usage.prompt_tokens ?? claudeBody.usage.input_tokens ?? 0,
-        output_tokens: claudeBody.usage.completion_tokens ?? claudeBody.usage.output_tokens ?? 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0
-      };
-    } else if (claudeBody) {
-      // 如果 usage 完全缺失，补一个默认值（防止 undefined 崩溃）
-      claudeBody.usage = {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0
-      };
-    }
+    // 流式：用 TransformStream 拦截 chunk，只改 usage chunk
+    const transformStream = new TransformStream({
+      async transform(chunk, controller) {
+        // chunk 是 Uint8Array，转字符串
+        const text = new TextDecoder().decode(chunk);
+        const lines = text.split('\n\n');  // SSE 以 \n\n 分行
 
-    // 用修改后的 body 创建新 Response（保留原 status 和 headers）
-    const modifiedResponse = new Response(JSON.stringify(claudeBody), {
-      status: providerResponse.status,
-      statusText: providerResponse.statusText,
-      headers: providerResponse.headers
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+
+            if (data === '[DONE]') {
+              // [DONE] 原样输出
+              controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+              continue;
+            }
+
+            try {
+              const json = JSON.parse(data);
+              if (json.usage) {
+                // 这是 usage chunk！改成 Claude 风格
+                const newUsage = {
+                  input_tokens: json.usage.prompt_tokens ?? json.usage.input_tokens ?? 0,
+                  output_tokens: json.usage.completion_tokens ?? json.usage.output_tokens ?? 0,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0
+                };
+                const newJson = { ...json, usage: newUsage };
+                const newData = 'data: ' + JSON.stringify(newJson);
+                controller.enqueue(new TextEncoder().encode(newData + '\n\n'));
+                continue;
+              }
+            } catch (e) {
+              // 解析失败，原样输出
+            }
+          }
+
+          // 非 usage chunk，原样输出
+          controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+        }
+      }
     });
 
-    // ------------------ 修复结束 ------------------
+    // 返回新的 Response，body 是 transformStream 的 readable
+    return new Response(claudeResponse.body.pipeThrough(transformStream), {
+      status: claudeResponse.status,
+      statusText: claudeResponse.statusText,
+      headers: claudeResponse.headers
+    });
 
-    // 原来的返回改成返回 modifiedResponse
-    return modifiedResponse;
+    
 }
 
 function parsePath(url: URL): { typeParam?: string; baseUrl?: string; err?: Response } {
