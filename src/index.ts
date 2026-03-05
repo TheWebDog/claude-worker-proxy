@@ -51,8 +51,12 @@ async function handle(request: Request): Promise<Response> {
     )
     const providerResponse = await fetch(providerRequest)
     
+    console.log('NVIDIA raw response headers:', Object.fromEntries(providerResponse.headers.entries()));
+    
     // 先让原有转换函数处理（支持流式转换 OpenAI → Claude 格式）
     let claudeResponse = await provider.convertToClaudeResponse(providerResponse);
+
+    console.log('After convertToClaudeResponse headers:', Object.fromEntries(claudeResponse.headers.entries()));
 
     // 判断是否流式（text/event-stream 是 OpenAI/Claude 流式标准）
     const contentType = claudeResponse.headers.get('content-type') || '';
@@ -95,6 +99,9 @@ async function handle(request: Request): Promise<Response> {
       async transform(chunk, controller) {
         // chunk 是 Uint8Array，转字符串
         const text = new TextDecoder().decode(chunk);
+
+        console.log('SSE chunk received:', text);  // 打印每个原始 chunk
+          
         const lines = text.split('\n\n');  // SSE 以 \n\n 分行
 
         for (const line of lines) {
