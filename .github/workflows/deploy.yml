@@ -3,7 +3,7 @@ name: Deploy to Cloudflare Workers
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 允许手动触发（在 Actions 页面点 Run workflow）
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -16,15 +16,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # 用 20.x 版本，最稳定
+          node-version: '20'
 
       - name: Install dependencies
-        run: npm ci   # 如果你用 pnpm 或 yarn，改成 pnpm install --frozen-lockfile 或 yarn install --frozen-lockfile
+        run: npm ci
 
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v2   # 改用 v2 版本，更稳定，不会轻易 npx 炸
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
-          workingDirectory: '.'   # 项目根目录，如果你的 Worker 入口在 src/，改成 'src'
+          workingDirectory: '.'
