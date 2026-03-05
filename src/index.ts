@@ -94,95 +94,75 @@ async function handle(request: Request): Promise<Response> {
       });
     }
 
-    // 流式：用 TransformStream 拦截 chunk，只改 usage chunk
+    // 流式：用 TransformStream 拦截并保留 usage chunk
     const transformStream = new TransformStream({
       async transform(chunk, controller) {
-        // chunk 是 Uint8Array，转字符串
         const text = new TextDecoder().decode(chunk);
+        console.log('SSE chunk received:', text);  // 你已有这个
 
-        console.log('SSE chunk received:', text);  // 打印每个原始 chunk
-          
-        const lines = text.split('\n\n');  // SSE 以 \n\n 分行
-
-        for (const line of lines) {
+        const lines = text.split('\n\n');
+        for (let line of lines) {
           if (!line.trim()) continue;
+
+          if (line.startsWith('event: ')) {
+            // 保留 event line 原样
+            controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+            continue;
+          }
 
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim();
 
             if (data === '[DONE]') {
-              // [DONE] 原样输出
+              console.log('Reached [DONE]');
               controller.enqueue(new TextEncoder().encode(line + '\n\n'));
               continue;
             }
 
             try {
               const json = JSON.parse(data);
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
 
-              if (data === '[DONE]') {
-                console.log('Reached [DONE]');
-                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
+              // 检测 NVIDIA 的 usage chunk 特征：choices 为空数组 + 有 usage
+              if (json.choices && json.choices.length === 0 && json.usage) {
+                console.log('Found NVIDIA usage chunk! Original:', json.usage);
+
+                // 改成 Claude 风格
+                const claudeUsage = {
+                  input_tokens: json.usage.prompt_tokens ?? json.usage.input_tokens ?? 0,
+                  output_tokens: json.usage.completion_tokens ?? json.usage.output_tokens ?? 0,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0
+                };
+
+                // 保持原结构，只换 usage
+                const newJson = { ...json, usage: claudeUsage };
+
+                const newData = 'data: ' + JSON.stringify(newJson);
+                console.log('Sending modified usage chunk:', claudeUsage);
+                controller.enqueue(new TextEncoder().encode(newData + '\n\n'));
                 continue;
               }
 
-              try {
-                const json = JSON.parse(data);
+              // 其他 data chunk 原样
+              controller.enqueue(new TextEncoder().encode(line + '\n\n'));
 
-                // 关键：如果这个 chunk 是 usage chunk（choices 为空数组 + 有 usage）
-                if (json.choices && json.choices.length === 0 && json.usage) {
-                  console.log('Found NVIDIA usage chunk! Original:', json.usage);
-
-                  // 改成 Claude 风格
-                  const claudeUsage = {
-                    input_tokens: json.usage.prompt_tokens ?? 0,
-                    output_tokens: json.usage.completion_tokens ?? 0,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0
-                  };
-
-                  // 保留原结构，只换 usage
-                  const newJson = {
-                    ...json,
-                    usage: claudeUsage
-                  };
-
-                  const newData = 'data: ' + JSON.stringify(newJson);
-                  console.log('Sending modified usage chunk:', claudeUsage);
-                  controller.enqueue(new TextEncoder().encode(newData + '\n\n'));
-                  continue;
-                }
-
-                // 其他 chunk 原样输出
-                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
-
-              } catch (e) {
-                console.log('JSON parse failed for line:', line, 'error:', e);
-                controller.enqueue(new TextEncoder().encode(line + '\n\n'));
-              }
-            } else {
-              // 非 data: 行，原样
+            } catch (e) {
+              console.log('JSON parse failed for line:', line, 'error:', e);
               controller.enqueue(new TextEncoder().encode(line + '\n\n'));
             }
-            } catch (e) {
-              // 解析失败，原样输出
-            }
+          } else {
+            // 非 data 行，原样
+            controller.enqueue(new TextEncoder().encode(line + '\n\n'));
           }
-
-          // 非 usage chunk，原样输出
-          controller.enqueue(new TextEncoder().encode(line + '\n\n'));
         }
       }
     });
 
-    // 返回新的 Response，body 是 transformStream 的 readable
     return new Response(claudeResponse.body.pipeThrough(transformStream), {
       status: claudeResponse.status,
       statusText: claudeResponse.statusText,
       headers: claudeResponse.headers
     });
-
     
 }
 
